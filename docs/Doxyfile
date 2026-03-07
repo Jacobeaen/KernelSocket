@@ -12,7 +12,7 @@
 
 PROJECT_NAME           = "KernelSocket"
 PROJECT_NUMBER         = 0.1.0
-PROJECT_BRIEF          = "Kernel-mode TCP/UDP networking API for Windows and Linux"
+PROJECT_BRIEF          = "Crossplatform kernel-mode TCP/UDP networking API"
 
 # Optional: path to a 200x55px logo (PNG/JPG)
 # PROJECT_LOGO         = logo.png
@@ -25,7 +25,8 @@ OUTPUT_DIRECTORY       = .
 
 INPUT                  = ../include \
                          ../windows \
-                         ../linux
+                         ../linux \
+						 ../README.md
 
 # Also scan subdirectories
 RECURSIVE              = YES
@@ -93,6 +94,16 @@ HTML_FILE_EXTENSION    = .html
 GENERATE_TREEVIEW      = YES
 TREEVIEW_WIDTH         = 250
 
+# Sidebar-Only Theme
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+HTML_HEADER            = header.html
+HTML_EXTRA_FILES       = doxygen-awesome-css/doxygen-awesome-darkmode-toggle.js
+HTML_EXTRA_STYLESHEET  = doxygen-awesome-css/doxygen-awesome.css \
+                         doxygen-awesome-css/doxygen-awesome-sidebar-only.css \
+						 doxygen-awesome-css/doxygen-awesome-sidebar-only-darkmode-toggle.css
+HTML_COLORSTYLE        = DARK
+
 # Syntax highlighting in code snippets
 SOURCE_BROWSER         = YES
 INLINE_SOURCES         = NO
@@ -128,7 +139,7 @@ INCLUDE_GRAPH          = YES
 INCLUDED_BY_GRAPH      = YES
 
 # Keep graph images inside the html output folder
-DOT_PATH               =
+DOT_PATH               = C:\Program Files\Graphviz\bin
 DOT_GRAPH_MAX_NODES    = 50
 MAX_DOT_GRAPH_DEPTH    = 3
 DOT_IMAGE_FORMAT       = svg
