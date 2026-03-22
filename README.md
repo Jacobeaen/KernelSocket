@@ -2,7 +2,7 @@
 
 > Kernel-mode TCP/UDP networking API for Windows and Linux drivers
 
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE.)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)](README.md)
 [![Language](https://img.shields.io/badge/language-C-orange)](README.md)
 [![Status](https://img.shields.io/badge/status-In%20Development-yellow)](README.md)
@@ -315,4 +315,4 @@ Developed as part of the **Основы Проектной Деятельнос�
 
 ## License
 
-[MIT](LICENSE.)
+[MIT](LICENSE)
