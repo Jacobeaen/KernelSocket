@@ -26,8 +26,9 @@ OUTPUT_DIRECTORY       = .
 INPUT                  = ../include \
                          ../windows \
                          ../linux \
+						 ../test \
 						 ../README.md
-
+						 
 # Also scan subdirectories
 RECURSIVE              = YES
 
@@ -36,8 +37,7 @@ FILE_PATTERNS          = *.h *.c *.cpp
 
 # Exclude build artefacts and third-party dirs
 EXCLUDE_PATTERNS       = */build/* \
-                         */.git/* \
-                         */test/*
+                         */.git/*
 
 # ---------------------------------------------------------------------------
 # Extraction settings

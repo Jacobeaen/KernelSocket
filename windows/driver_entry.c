@@ -43,7 +43,7 @@
   * ========================================================================= */
 
   /** IPv4 address of the machine running echo_server.exe. */
-#define TEST_SERVER_IP   "192.168.56.1"
+#define TEST_SERVER_IP   "192.168.x.x"
 
 /** TCP echo port — echo_server listens here. */
 #define TEST_PORT_TCP    9000
