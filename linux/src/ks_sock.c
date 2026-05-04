@@ -194,3 +194,68 @@ void ks_close(ks_socket_t *ks)
 
     kfree(ks);
 }
+
+int ks_bind(ks_socket_t *ks, const char *ip, unsigned short port)
+{
+    struct sockaddr_in addr = {0};
+    int ret;
+
+    if (!ks)
+        return KS_ERR_INVAL;
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    
+    if (ip) {
+        if (!in4_pton(ip, -1, (u8 *)&addr.sin_addr.s_addr, -1, NULL))
+            return KS_ERR_INVAL;
+    } 
+    else {
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    }
+
+    ret = kernel_bind(ks->sock, (struct sockaddr *)&addr, sizeof(addr));
+    if (ret < 0)
+        return KS_ERR;
+
+    return KS_OK;
+}
+
+int ks_listen(ks_socket_t *ks, int backlog)
+{
+    int ret;
+
+    if (!ks || ks->protocol != KS_TCP)
+        return KS_ERR_INVAL;
+
+    ret = kernel_listen(ks->sock, backlog);
+    if (ret < 0)
+        return KS_ERR;
+
+    return KS_OK;
+}
+
+ks_socket_t* ks_accept(ks_socket_t *ks)
+{
+    struct socket *client_sock;
+    ks_socket_t *client_ks;
+    int ret;
+
+    if (!ks || ks->protocol != KS_TCP)
+        return NULL;
+
+    ret = kernel_accept(ks->sock, &client_sock, 0);
+    if (ret < 0)
+        return NULL;
+
+    client_ks = kmalloc(sizeof(*client_ks), GFP_KERNEL);
+    if (!client_ks) {
+        sock_release(client_sock);
+        return NULL;
+    }
+
+    client_ks->sock = client_sock;
+    client_ks->protocol = KS_TCP;
+
+    return client_ks;
+}

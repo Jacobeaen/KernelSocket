@@ -10,8 +10,11 @@ static int __init ks_init(void)
 {
     printk(KERN_INFO "KS module loaded\n");
 
-    ks_test();
-    ks_echo_start(); 
+    // ks_test_client_tcp(); // kernel->userspace (client)
+    // ks_test_client_udp(); // kernel->userspace (client) 
+    // ks_test_us_krnl(); // two clients (tcp + udp) starting in one function
+    // ks_echo_start_tcp();  // userspace->kernel (echo server)
+    // ks_echo_start_udp();  // userspace->kernel (echo server)
     
     return 0;
 }
