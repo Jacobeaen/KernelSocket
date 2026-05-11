@@ -1,293 +1,174 @@
 /**
  * @file ks_api.h
- * @brief KernelSocket — kernel-mode TCP/UDP networking API
+ * @brief KernelSocket — Единый API для работы с TCP/UDP в режиме ядра (Windows/Linux)
  *
- * Unified interface for establishing TCP/UDP connections and transferring
- * data from kernel-mode drivers on Windows (KMDF) and Linux (LKM).
+ * @details 
+ * Этот заголовочный файл предоставляет кроссплатформенный интерфейс для 
+ * организации сетевого взаимодействия из драйверов. Поддерживает как клиентские, 
+ * так и серверные сценарии (K<->U, U<->K, K<->K).
  *
- * ### Typical TCP usage
- * @code
- *   ks_socket_t *sock = ks_socket(KS_TCP);
- *   if (!sock) { // handle error }
- *
- *   if (ks_connect(sock, "192.168.1.100", 9000) != KS_OK) { // handle error }
- *
- *   const char msg[] = "Hello from kernel!";
- *   ks_send(sock, msg, sizeof(msg));
- *
- *   char reply[256] = {0};
- *   int n = ks_recv(sock, reply, sizeof(reply));
- *
- *   ks_close(sock);
- * @endcode
- *
- * ### Typical UDP usage
- * @code
- *   ks_socket_t *sock = ks_socket(KS_UDP);
- *   if (!sock) { // handle error }
- *
- *   const char msg[] = "ping";
- *   ks_sendto(sock, msg, sizeof(msg), "192.168.1.100", 9001);
- *
- *   char buf[256] = {0};
- *   char src_ip[16];
- *   unsigned short src_port;
- *   ks_recvfrom(sock, buf, sizeof(buf), src_ip, &src_port);
- *
- *   ks_close(sock);
- * @endcode
- *
- * @note This header is platform-agnostic. The implementation is provided
- *       separately in @c windows/ks_windows.c and @c linux/ks_linux.c.
- *
- * @authors KernelSocket Team, SPbPU IEiT
- * @version 0.1.0
+ * @warning ОБЩИЕ ПРАВИЛА БЕЗОПАСНОСТИ (ИЗБЕЖАНИЕ BUGCHECK / KERNEL PANIC):
+ * 1. IRQL (Windows): Все функции должны вызываться СТРОГО на уровне IRQL == PASSIVE_LEVEL. 
+ *    Вызов на DISPATCH_LEVEL или выше приведет к BSOD (IRQL_NOT_LESS_OR_EQUAL).
+ * 2. Память: Все передаваемые буферы (Buf) должны располагаться в невыгружаемой 
+ *    памяти (NonPagedPool для Windows, kmalloc с GFP_KERNEL для Linux). Передача 
+ *    указателей на user-mode память без правильной блокировки (MDL) приведет к 
+ *    BSOD (PAGE_FAULT_IN_NONPAGED_AREA).
  */
 
 #ifndef KS_API_H
 #define KS_API_H
+
+/* =========================================================================
+ * 1. Определение платформы и системные зависимости
+ * ========================================================================= */
+#if defined(_WIN32) || defined(_WIN64)
+    #define KS_PLATFORM_WINDOWS
+    #include <ntddk.h>
+#elif defined(__linux__) || defined(__KERNEL__)
+    #define KS_PLATFORM_LINUX
+    #include <linux/kernel.h>
+    #include <linux/module.h>
+    #include <linux/types.h>
+#else
+    #error "[KernelSocket] Unsupported platform! Must be compiled for Windows or Linux kernel."
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* =========================================================================
- * Constants
+ * 2. Константы (SCREAMING_SNAKE_CASE)
  * ========================================================================= */
 
-/**
- * @defgroup ks_protocols Protocol identifiers
- * @{
- */
-
-/** @brief Use TCP (connection-oriented, reliable, stream-based). */
+/** @brief Идентификаторы протоколов */
 #define KS_TCP  0
-
-/** @brief Use UDP (connectionless, unreliable, datagram-based). */
 #define KS_UDP  1
 
-/** @} */
-
-/**
- * @defgroup ks_errors Return codes
- * @{
- */
-
-/** @brief Operation completed successfully. */
-#define KS_OK           0
-
-/** @brief Generic error. Check platform log (dmesg / DbgPrint) for details. */
-#define KS_ERR         -1
-
-/** @brief Invalid argument passed to a function. */
-#define KS_ERR_INVAL   -2
-
-/** @brief Memory allocation failure. */
-#define KS_ERR_NOMEM   -3
-
-/** @brief Connection refused or host unreachable. */
-#define KS_ERR_CONN    -4
-
-/** @brief Send or receive timeout. */
-#define KS_ERR_TIMEOUT -5
-
-/** @} */
+/** @brief Коды возврата */
+#define KS_OK           0    /**< Успешное выполнение */
+#define KS_ERR         -1    /**< Общая ошибка платформы */
+#define KS_ERR_INVAL   -2    /**< Переданы неверные аргументы */
+#define KS_ERR_NOMEM   -3    /**< Ошибка выделения памяти пула */
+#define KS_ERR_CONN    -4    /**< В соединении отказано / узел недоступен */
+#define KS_ERR_TIMEOUT -5    /**< Истекло время ожидания операции */
 
 /* =========================================================================
- * Opaque socket type
+ * 3. Типы данных
  * ========================================================================= */
 
 /**
- * @brief Opaque handle representing a kernel socket.
- *
- * The internal layout is defined in the platform-specific implementation
- * files and must not be accessed directly. Always use the @c ks_* functions.
- *
- * Obtain a handle via ks_socket() and release it with ks_close().
+ * @brief Непрозрачный дескриптор сокета.
+ * Внутренняя структура скрыта в платформенных исходниках (в internal.h).
+ * Для пользователя API это просто указатель.
  */
-typedef struct ks_socket ks_socket_t;
+typedef struct KS_SOCKET KS_SOCKET;
 
 /* =========================================================================
- * Socket lifecycle
+ * 4. Базовый жизненный цикл (Функции: camelCase, Аргументы: PascalCase)
  * ========================================================================= */
 
 /**
- * @defgroup ks_lifecycle Socket lifecycle
- * @{
+ * @brief Создает новый сокет (выделяет ресурсы ядра).
+ * @param Protocol Транспортный протокол (KS_TCP или KS_UDP).
+ * @return Указатель на структуру KS_SOCKET или NULL в случае нехватки памяти (NOMEM).
  */
+KS_SOCKET* ksSocket(int Protocol);
 
 /**
- * @brief Allocate and initialise a new kernel socket.
- *
- * Allocates the platform-specific socket structure and prepares it for use.
- * On Windows this registers a WSK client and creates a WSK socket object.
- * On Linux this calls @c sock_create_kern().
- *
- * @param[in] protocol  Transport protocol to use: @ref KS_TCP or @ref KS_UDP.
- *
- * @return Pointer to a newly allocated @ref ks_socket_t on success,
- *         or @c NULL on failure (out of memory, WSK unavailable, etc.).
- *
- * @note The returned handle must eventually be released with ks_close()
- *       to avoid resource leaks in kernel space.
- *
- * @see ks_close()
+ * @brief Закрывает сокет и освобождает ресурсы ядра.
+ * @param Sock Указатель на сокет, полученный из ksSocket или ksAccept.
  */
-ks_socket_t *ks_socket(int protocol);
-
-/**
- * @brief Shut down and free a kernel socket.
- *
- * Performs a graceful shutdown (FIN for TCP), releases all platform
- * resources associated with the socket, and frees the handle.
- *
- * Safe to call with @c NULL — no-op in that case.
- *
- * @param[in,out] sock  Socket handle obtained from ks_socket(). Set to
- *                      @c NULL by the caller after this call.
- *
- * @see ks_socket()
- */
-void ks_close(ks_socket_t *sock);
-
-/** @} */
+void ksClose(KS_SOCKET* Sock);
 
 /* =========================================================================
- * TCP operations
+ * 5. Серверные функции (для сценариев U->K и K->K)
  * ========================================================================= */
 
 /**
- * @defgroup ks_tcp TCP operations
- * @{
+ * @brief Привязывает сокет к локальному IP-адресу и порту.
+ * @param Sock Указатель на сокет.
+ * @param Ip Локальный IPv4-адрес строкой (например, "0.0.0.0").
+ * @param Port Локальный порт в host byte order.
+ * @return KS_OK при успехе, иначе негативный код ошибки.
  */
+int ksBind(KS_SOCKET* Sock, const char* Ip, unsigned short Port);
 
 /**
- * @brief Connect a TCP socket to a remote host.
- *
- * Resolves @p ip to a binary address and performs a synchronous TCP
- * three-way handshake. Blocks until the connection is established or an
- * error occurs.
- *
- * @param[in] sock   A TCP socket created with @c ks_socket(KS_TCP).
- * @param[in] ip     Remote IPv4 address as a null-terminated string,
- *                   e.g. @c "192.168.1.100". Domain names are not resolved.
- * @param[in] port   Remote port in host byte order (1–65535).
- *
- * @retval KS_OK         Connection established.
- * @retval KS_ERR_INVAL  @p sock is @c NULL, @p ip is @c NULL, or
- *                       @p protocol is not @c KS_TCP.
- * @retval KS_ERR_CONN   Connection refused or host unreachable.
- * @retval KS_ERR        Other platform error.
- *
- * @pre  @p sock must have been created with @c ks_socket(KS_TCP).
- * @post On success the socket is in a connected state and ready for
- *       ks_send() / ks_recv().
- *
- * @see ks_send(), ks_recv(), ks_close()
+ * @brief Переводит сокет TCP в режим прослушивания входящих соединений.
+ * @param Sock Указатель на привязанный сокет (после ksBind).
+ * @param Backlog Максимальный размер очереди ожидающих подключений.
+ * @return KS_OK при успехе, иначе код ошибки.
  */
-int ks_connect(ks_socket_t *sock, const char *ip, unsigned short port);
+int ksListen(KS_SOCKET* Sock, int Backlog);
 
 /**
- * @brief Send data over a connected TCP socket.
- *
- * Transmits exactly @p len bytes from @p buf. The call blocks until all
- * bytes have been handed to the network stack or an error occurs.
- *
- * @param[in] sock  Connected TCP socket.
- * @param[in] buf   Pointer to the data buffer. Must be a kernel-space address
- *                  (i.e. accessible without paging during the call).
- * @param[in] len   Number of bytes to send. Must be > 0.
- *
- * @return Number of bytes sent on success (equal to @p len),
- *         or a negative @ref ks_errors code on failure.
- *
- * @pre  ks_connect() must have completed successfully.
- *
- * @see ks_recv()
+ * @brief Принимает входящее TCP-подключение (блокирующий вызов).
+ * @param Sock Слушающий сокет (после ksListen).
+ * @param NewSock [out] Возвращает новый сокет для общения с клиентом.
+ * @param ClientIp [out] Буфер (мин. 16 байт) для записи IP клиента (может быть NULL).
+ * @param ClientPort [out] Переменная для записи порта клиента (может быть NULL).
+ * @return KS_OK при успехе. Возвращает KS_ERR при падении или закрытии сокета.
  */
-int ks_send(ks_socket_t *sock, const void *buf, unsigned int len);
-
-/**
- * @brief Receive data from a connected TCP socket.
- *
- * Blocks until at least 1 byte is available or the connection is closed.
- * May return fewer bytes than @p len (stream semantics — loop if needed).
- *
- * @param[in]  sock  Connected TCP socket.
- * @param[out] buf   Destination buffer. Must be a kernel-space address.
- * @param[in]  len   Maximum number of bytes to read (size of @p buf).
- *
- * @return Number of bytes written into @p buf on success (1 ≤ n ≤ len),
- *         @c 0 if the remote end closed the connection,
- *         or a negative @ref ks_errors code on failure.
- *
- * @see ks_send()
- */
-int ks_recv(ks_socket_t *sock, void *buf, unsigned int len);
-
-/** @} */
+int ksAccept(KS_SOCKET* Sock, KS_SOCKET** NewSock, char* ClientIp, unsigned short* ClientPort);
 
 /* =========================================================================
- * UDP operations
+ * 6. Клиентские и транспортные функции (TCP)
  * ========================================================================= */
 
 /**
- * @defgroup ks_udp UDP operations
- * @{
+ * @brief Устанавливает TCP-соединение с удаленным узлом.
+ * @param Sock Указатель на сокет (KS_TCP).
+ * @param Ip IPv4-адрес сервера строкой ("192.168.1.100").
+ * @param Port Порт сервера.
+ * @return KS_OK или код ошибки (например, KS_ERR_CONN).
  */
+int ksConnect(KS_SOCKET* Sock, const char* Ip, unsigned short Port);
 
 /**
- * @brief Send a UDP datagram to a specific destination.
- *
- * Each call sends one self-contained datagram. No connection state is
- * required; the destination is specified per call.
- *
- * @param[in] sock   A UDP socket created with @c ks_socket(KS_UDP).
- * @param[in] buf    Datagram payload. Must be a kernel-space address.
- * @param[in] len    Payload length in bytes. Must be ≤ 65507 bytes
- *                   (maximum UDP payload over IPv4).
- * @param[in] ip     Destination IPv4 address as a null-terminated string.
- * @param[in] port   Destination port in host byte order.
- *
- * @return Number of bytes sent on success,
- *         or a negative @ref ks_errors code on failure.
- *
- * @see ks_recvfrom()
+ * @brief Отправляет данные по TCP.
+ * @param Sock Подключенный TCP-сокет.
+ * @param Buf Указатель на буфер с данными (должен быть в NonPagedPool).
+ * @param Len Количество байт для отправки (> 0).
+ * @return Количество отправленных байт или код ошибки.
  */
-int ks_sendto(ks_socket_t *sock,
-              const void   *buf,
-              unsigned int  len,
-              const char   *ip,
-              unsigned short port);
+int ksSend(KS_SOCKET* Sock, const void* Buf, unsigned int Len);
 
 /**
- * @brief Receive a UDP datagram and record the sender's address.
- *
- * Blocks until a datagram arrives. If the datagram is larger than @p len,
- * the excess bytes are silently discarded (standard UDP behaviour).
- *
- * @param[in]  sock      A UDP socket created with @c ks_socket(KS_UDP).
- * @param[out] buf       Destination buffer. Must be a kernel-space address.
- * @param[in]  len       Size of @p buf in bytes.
- * @param[out] src_ip    Caller-allocated buffer (at least 16 bytes) that
- *                       will receive the sender's IPv4 address as a
- *                       null-terminated string, e.g. @c "10.0.0.1".
- *                       May be @c NULL if the address is not needed.
- * @param[out] src_port  Receives the sender's port in host byte order.
- *                       May be @c NULL if not needed.
- *
- * @return Number of bytes written into @p buf on success,
- *         or a negative @ref ks_errors code on failure.
- *
- * @see ks_sendto()
+ * @brief Принимает данные по TCP (блокирует до получения минимум 1 байта).
+ * @param Sock Подключенный TCP-сокет.
+ * @param Buf [out] Буфер для записи данных (NonPagedPool).
+ * @param Len Размер буфера.
+ * @return Количество прочитанных байт, 0 при закрытии соединения другой стороной, или ошибка.
  */
-int ks_recvfrom(ks_socket_t   *sock,
-                void          *buf,
-                unsigned int   len,
-                char          *src_ip,
-                unsigned short *src_port);
+int ksRecv(KS_SOCKET* Sock, void* Buf, unsigned int Len);
 
-/** @} */
+/* =========================================================================
+ * 7. Транспортные функции (UDP)
+ * ========================================================================= */
+
+/**
+ * @brief Отправляет UDP-датаграмму заданному узлом.
+ * @param Sock UDP-сокет.
+ * @param Buf Указатель на данные.
+ * @param Len Длина данных (не более ~65507 байт).
+ * @param Ip IP-адрес получателя.
+ * @param Port Порт получателя.
+ * @return Количество отправленных байт или код ошибки.
+ */
+int ksSendTo(KS_SOCKET* Sock, const void* Buf, unsigned int Len, const char* Ip, unsigned short Port);
+
+/**
+ * @brief Принимает UDP-датаграмму и записывает адрес отправителя.
+ * @param Sock UDP-сокет (обычно после ksBind).
+ * @param Buf [out] Буфер для записи.
+ * @param Len Размер буфера.
+ * @param SrcIp [out] Буфер (мин. 16 байт) для IP отправителя (может быть NULL).
+ * @param SrcPort [out] Порт отправителя (может быть NULL).
+ * @return Количество полученных байт или код ошибки.
+ */
+int ksRecvFrom(KS_SOCKET* Sock, void* Buf, unsigned int Len, char* SrcIp, unsigned short* SrcPort);
 
 #ifdef __cplusplus
 }
