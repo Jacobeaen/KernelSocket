@@ -20,14 +20,16 @@
 #define KS_API_H
 
 /* =========================================================================
- * 1. Определение платформы и маршрутизация заголовков
+ * 1. Определение платформы и системные зависимости
  * ========================================================================= */
 #if defined(_WIN32) || defined(_WIN64)
     #define KS_PLATFORM_WINDOWS
-    #include "windows/ks_platform_win.h"
+    #include <ntddk.h>
 #elif defined(__linux__) || defined(__KERNEL__)
     #define KS_PLATFORM_LINUX
-    #include "linux/ks_platform_linux.h"
+    #include <linux/kernel.h>
+    #include <linux/module.h>
+    #include <linux/types.h>
 #else
     #error "[KernelSocket] Unsupported platform! Must be compiled for Windows or Linux kernel."
 #endif
@@ -53,12 +55,13 @@ extern "C" {
 #define KS_ERR_TIMEOUT -5    /**< Истекло время ожидания операции */
 
 /* =========================================================================
- * 3. Типы данных (SCREAMING_SNAKE_CASE)
+ * 3. Типы данных
  * ========================================================================= */
 
 /**
  * @brief Непрозрачный дескриптор сокета.
- * Внутренняя структура скрыта в платформенных исходниках (ks_windows.c / ks_linux.c).
+ * Внутренняя структура скрыта в платформенных исходниках (в internal.h).
+ * Для пользователя API это просто указатель.
  */
 typedef struct KS_SOCKET KS_SOCKET;
 
@@ -146,7 +149,7 @@ int ksRecv(KS_SOCKET* Sock, void* Buf, unsigned int Len);
  * ========================================================================= */
 
 /**
- * @brief Отправляет UDP-датаграмму заданному узлу.
+ * @brief Отправляет UDP-датаграмму заданному узлом.
  * @param Sock UDP-сокет.
  * @param Buf Указатель на данные.
  * @param Len Длина данных (не более ~65507 байт).
